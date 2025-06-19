@@ -8,7 +8,7 @@ RUN yarn build
 FROM python:3.11-slim-buster
 WORKDIR /app
 
-COPY --from=builder /app/dist /app/static
+COPY --from=builder /app/dist /app/dist
 
 COPY . .
 
