@@ -48,30 +48,72 @@ def schema():
 
 # 查询数据（原有功能）
 @app.get("/class/{class_name}/{offset}/{limit}/{keyword}")
-def query_objects(class_name: str, offset: int, limit: int, keyword: str = '', properties: list[str] = Query(None), sort: str = 'none'):
+def query_objects(class_name: str, offset: int, limit: int, keyword: str = '', 
+                 properties: list[str] = Query(None), sort: str = 'none'):
     try:
+        logger.info(f"查询: class={class_name}, keyword='{keyword}', offset={offset}, limit={limit}, sort={sort}")
+        
         builder = client.query.get(class_name, properties)
-        logger.info(f"Querying class: {class_name}, keyword: {keyword}")
-        
-        if keyword != "none":
-            builder = builder.with_near_text({"concepts": [keyword]})
-        
-        if sort != 'none':
+        where_filter = None
+
+        # 如果有关键字，构建where过滤器
+        if keyword and keyword != "none" and keyword.strip() != "":
+            keyword = keyword.strip()
+            schema = client.schema.get(class_name)
+            text_properties = []
+            for prop in schema.get('properties', []):
+                data_type = prop.get('dataType', [])
+                if 'text' in data_type or 'string' in data_type:
+                    text_properties.append(prop['name'])
+            
+            search_properties = [prop for prop in properties if prop in text_properties] if properties else text_properties
+            
+            if search_properties:
+                where_operands = [
+                    {
+                        "path": [prop],
+                        "operator": "Like",
+                        "valueText": f"*{keyword}*"
+                    } for prop in search_properties
+                ]
+                where_filter = {
+                    "operator": "Or",
+                    "operands": where_operands
+                }
+                builder = builder.with_where(where_filter)
+
+        # 排序
+        if sort != 'none' and ':' in sort:
             sort_property, sort_order = sort.split(':')
             builder = builder.with_sort([{
                 'path': [sort_property],
                 'order': sort_order
             }])
+
+        # 执行查询
         do = builder.with_additional("id").with_offset(offset).with_limit(limit).do()
-        count = client.query.aggregate(class_name).with_meta_count().do().get('data').get('Aggregate').get(class_name)[0].get('meta').get('count')
+
+        # 获取总数
+        aggregate_builder = client.query.aggregate(class_name)
+        if where_filter:
+            aggregate_builder = aggregate_builder.with_where(where_filter)
         
-        logger.info(f"Total count: {count}")
+        aggregate_result = aggregate_builder.with_meta_count().do()
+        count = 0
+        if (aggregate_result and aggregate_result.get('data') and 
+            aggregate_result.get('data').get('Aggregate') and 
+            aggregate_result.get('data').get('Aggregate').get(class_name)):
+            count = aggregate_result.get('data').get('Aggregate').get(class_name)[0].get('meta').get('count')
+
+        logger.info(f"查询返回: {len(do.get('data', {}).get('Get', {}).get(class_name, []))}条，总共{count}条")
         return {
-            'data': do.get('data').get('Get').get(class_name),
+            'data': do.get('data', {}).get('Get', {}).get(class_name, []),
             'count': count
         }
     except Exception as e:
-        logger.error(f"Query error: {str(e)}")
+        logger.error(f"查询错误: {str(e)}")
+        import traceback
+        logger.error(f"错误详情: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # 新增对象
