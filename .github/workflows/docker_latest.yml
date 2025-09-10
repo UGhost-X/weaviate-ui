@@ -28,4 +28,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: naaive/weaviate-ui:latest
+        tags: crpi-fxp2tnj34354v68i.cn-heyuan.personal.cr.aliyuncs.com/ughost-docker/weaviate-ui:latest
